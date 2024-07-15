@@ -1,0 +1,106 @@
+networks:
+  kong:
+services:
+  kong-database:
+    image: postgres:12-alpine
+    container_name: kong-database
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    volumes:
+      - ./data/db_postgres:/var/lib/postgresql/data
+    restart: always
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    networks:
+      - kong
+  migrations:
+    image: kong:${KONG_TAG-latest}
+    container_name: kong-migrations
+    env_file:
+      - .env
+    command: kong migrations bootstrap -v
+    networks:
+      - kong
+  kong:
+    image: kong:${KONG_TAG-latest}
+    container_name: kong
+    env_file:
+      - ./.env
+    ports:
+      - 127.0.0.1:8001:8001
+      - 127.0.0.1:8444:8444
+      - 80:8000
+      - 443:8443
+    restart: always
+    healthcheck:
+      test: ["CMD", "kong", "health"]
+      interval: 30s
+      timeout: 20s
+      retries: 5
+    networks:
+      - kong
+  mongo:
+    image: mongo:4.2.2-bionic
+    ports:
+      - 27017:27017
+    healthcheck:
+      test: echo 'db.stats().ok' | mongo localhost:27017/konga --quiet
+      interval: 30s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - ./data/db_mongo:/data/db
+    networks:
+      - kong
+  konga:
+    image: pantsel/konga:latest
+    ports:
+      - 1337:1337
+    environment:
+      DB_ADAPTER: mongo
+      DB_DATABASE: konga
+      DB_HOST: mongo
+      KONGA_SEED_USER_DATA_SOURCE_FILE: /kus.js
+      NODE_ENV: production
+    volumes:
+      - ./kus.js:/kus.js:ro
+    restart: always
+    networks:
+      - kong
+  prometheus:
+    image: prom/prometheus
+    ports:
+      - 9090:9090
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+    restart: always
+    networks:
+      - kong
+  node_exporter:
+    image: prom/node-exporter:latest
+    ports:
+      - 9100:9100
+    container_name: node_exporter
+    restart: always
+    networks:
+      - kong
+  grafana:
+    image: grafana/grafana
+    ports:
+      - 3000:3000
+    container_name: grafana
+    restart: always
+    environment:
+      GF_INSTALL_PLUGINS: grafana-clock-panel, grafana-simple-json-datasource
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin1234
+    networks:
+      - kong
